@@ -55,8 +55,13 @@ class SolanaTxResult:
 
 
 def _load_keypair() -> Keypair | None:
-    """Load the platform authority keypair from the configured path."""
+    """Load the platform authority keypair from env var (JSON bytes) or file path."""
     try:
+        # Prefer SOLANA_KEYPAIR env var (for Railway / cloud deploys)
+        if settings.solana_keypair:
+            secret_key_bytes = json.loads(settings.solana_keypair)
+            return Keypair.from_bytes(bytes(secret_key_bytes))
+        # Fall back to file path (for local dev)
         keypair_path = os.path.expanduser(settings.solana_keypair_path)
         with open(keypair_path, "r") as f:
             secret_key_bytes = json.load(f)
