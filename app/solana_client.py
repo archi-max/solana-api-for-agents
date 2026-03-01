@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
-from solders.system_program import ID as SYSTEM_PROGRAM_ID
+from solders.system_program import ID as SYSTEM_PROGRAM_ID, transfer, TransferParams
 from solders.instruction import Instruction, AccountMeta
 from solders.transaction import Transaction
 from solders.message import Message
@@ -179,13 +179,15 @@ def _encode_vote_type(vote_type: str) -> bytes:
 def _build_and_send_tx(
     rpc: SolanaClient,
     fee_payer: Keypair,
-    instruction: Instruction,
+    instruction: Instruction | list[Instruction],
     additional_signers: list[Keypair] | None = None,
     retries: int = 3,
 ) -> str:
     """Build, sign, and send a transaction. fee_payer pays SOL fees; additional_signers co-sign."""
     import time
 
+    # Support both single instruction and list of instructions
+    instructions = instruction if isinstance(instruction, list) else [instruction]
     all_signers = [fee_payer] + (additional_signers or [])
 
     for attempt in range(retries):
@@ -194,7 +196,7 @@ def _build_and_send_tx(
             blockhash = recent_blockhash_resp.value.blockhash
 
             message = Message.new_with_blockhash(
-                [instruction],
+                instructions,
                 fee_payer.pubkey(),
                 blockhash,
             )
@@ -255,7 +257,19 @@ def register_user(wallet_address: str, username: str, user_keypair: Keypair | No
 
         ix = Instruction(program_id, data, accounts)
         extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
-        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
+
+        # Prefund user wallet from platform wallet for PDA rent + token account rent
+        instructions = []
+        if user_keypair and user_keypair != platform_kp:
+            fund_ix = transfer(TransferParams(
+                from_pubkey=platform_kp.pubkey(),
+                to_pubkey=wallet,
+                lamports=5_000_000,  # 0.005 SOL for PDA rent + token account
+            ))
+            instructions.append(fund_ix)
+        instructions.append(ix)
+
+        sig = _build_and_send_tx(rpc, platform_kp, instructions, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,
@@ -265,6 +279,17 @@ def register_user(wallet_address: str, username: str, user_keypair: Keypair | No
     except Exception as e:
         logger.error(f"Solana registerUser failed: {e}")
         return SolanaTxResult(signature=None, pda=None, error=str(e))
+
+
+def _prefund_instructions(platform_kp: Keypair, user_keypair: Keypair | None, lamports: int = 10_000_000) -> list:
+    """Create a SOL transfer instruction to fund the user wallet if needed."""
+    if user_keypair and user_keypair != platform_kp:
+        return [transfer(TransferParams(
+            from_pubkey=platform_kp.pubkey(),
+            to_pubkey=user_keypair.pubkey(),
+            lamports=lamports,
+        ))]
+    return []
 
 
 def create_forum(name: str, user_keypair: Keypair | None = None) -> SolanaTxResult:
@@ -294,7 +319,8 @@ def create_forum(name: str, user_keypair: Keypair | None = None) -> SolanaTxResu
 
         ix = Instruction(program_id, data, accounts)
         extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
-        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
+        instructions = _prefund_instructions(platform_kp, user_keypair) + [ix]
+        sig = _build_and_send_tx(rpc, platform_kp, instructions, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,
@@ -361,7 +387,8 @@ def post_question(forum_pda_str: str, title: str, content_uri: str, user_keypair
 
         ix = Instruction(program_id, data, accounts)
         extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
-        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
+        instructions = _prefund_instructions(platform_kp, user_keypair) + [ix]
+        sig = _build_and_send_tx(rpc, platform_kp, instructions, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,
@@ -429,7 +456,8 @@ def post_answer(question_pda_str: str, content_uri: str, user_keypair: Keypair |
 
         ix = Instruction(program_id, data, accounts)
         extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
-        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
+        instructions = _prefund_instructions(platform_kp, user_keypair) + [ix]
+        sig = _build_and_send_tx(rpc, platform_kp, instructions, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,
@@ -487,7 +515,8 @@ def vote_question(
 
         ix = Instruction(program_id, data, accounts)
         extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
-        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
+        instructions = _prefund_instructions(platform_kp, user_keypair) + [ix]
+        sig = _build_and_send_tx(rpc, platform_kp, instructions, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,
@@ -545,7 +574,8 @@ def vote_answer(
 
         ix = Instruction(program_id, data, accounts)
         extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
-        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
+        instructions = _prefund_instructions(platform_kp, user_keypair) + [ix]
+        sig = _build_and_send_tx(rpc, platform_kp, instructions, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,

@@ -5,12 +5,18 @@ from fastapi import APIRouter, HTTPException
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from solders.keypair import Keypair
+from solders.pubkey import Pubkey
+from solders.system_program import transfer, TransferParams
+from solders.transaction import Transaction
+from solders.message import Message
+from solana.rpc.commitment import Confirmed, Finalized
+from solana.rpc.types import TxOpts
 from starlette.requests import Request
 from app.database import supabase
 from app.models.user import UserRegisterRequest, UserRegisterResponse, UserPublic
 from app.utils.api_key import generate_api_key
 from app.utils.solana_explorer import address_url
-from app.solana_client import register_user as solana_register_user
+from app.solana_client import register_user as solana_register_user, _load_keypair, _get_rpc_client
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +56,28 @@ async def register(request: Request, body: UserRegisterRequest):
             raise HTTPException(status_code=500, detail="Failed to create user")
 
         user_data = result.data[0]
+
+        # Fund user wallet from platform wallet for PDA rent
+        try:
+            platform_kp = _load_keypair()
+            if platform_kp:
+                rpc = _get_rpc_client()
+                fund_amount = 10_000_000  # 0.01 SOL for PDA rent
+                ix = transfer(TransferParams(
+                    from_pubkey=platform_kp.pubkey(),
+                    to_pubkey=user_keypair.pubkey(),
+                    lamports=fund_amount,
+                ))
+                blockhash_resp = rpc.get_latest_blockhash(commitment=Finalized)
+                blockhash = blockhash_resp.value.blockhash
+                msg = Message.new_with_blockhash([ix], platform_kp.pubkey(), blockhash)
+                tx = Transaction.new_unsigned(msg)
+                tx.sign([platform_kp], blockhash)
+                fund_result = rpc.send_transaction(tx, opts=TxOpts(skip_preflight=False, preflight_commitment=Confirmed))
+                rpc.confirm_transaction(fund_result.value, commitment=Confirmed)
+                logger.info(f"Funded user wallet {wallet_address} with {fund_amount} lamports")
+        except Exception as e:
+            logger.warning(f"Failed to fund user wallet: {e}")
 
         # Try Solana registration (non-blocking on failure)
         solana_result = solana_register_user(
