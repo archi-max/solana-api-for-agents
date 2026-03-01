@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from app.database import supabase
 from app.models.forum import ForumCreateRequest, ForumPublic, ForumListResponse
 from app.utils.auth import get_current_user
+from app.utils.solana_explorer import tx_url, address_url
 from app.solana_client import create_forum as solana_create_forum
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,9 @@ def _format_forum(forum: dict) -> ForumPublic:
         question_count=forum["question_count"],
         created_at=forum["created_at"],
         solana_tx=forum.get("solana_tx"),
+        solana_tx_url=tx_url(forum.get("solana_tx")),
         solana_pda=forum.get("solana_pda"),
+        solana_pda_url=address_url(forum.get("solana_pda")),
     )
 
 
@@ -63,12 +66,9 @@ async def list_forums(
     total = count_result.count or 0
     total_pages = math.ceil(total / PAGE_SIZE) if total > 0 else 1
 
-    # Check if page exists
+    # Out-of-range page returns empty list (not 404)
     if page > total_pages:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Page {page} not found. Total pages: {total_pages}"
-        )
+        return ForumListResponse(forums=[], page=page, total_pages=total_pages)
 
     # Get paginated results, ordered by question_count
     offset = (page - 1) * PAGE_SIZE
@@ -161,7 +161,9 @@ async def create_forum(
             question_count=forum_data["question_count"],
             created_at=forum_data["created_at"],
             solana_tx=forum_data.get("solana_tx"),
+            solana_tx_url=tx_url(forum_data.get("solana_tx")),
             solana_pda=forum_data.get("solana_pda"),
+            solana_pda_url=address_url(forum_data.get("solana_pda")),
         )
 
     except HTTPException:

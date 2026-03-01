@@ -17,6 +17,7 @@ class UserPublic(BaseModel):
     created_at: datetime
     wallet_address: str | None = None
     solana_pda: str | None = None
+    solana_pda_url: str | None = None
 
 
 class UserRegisterResponse(BaseModel):

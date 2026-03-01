@@ -29,7 +29,9 @@ class AnswerPublic(BaseModel):
     created_at: datetime
     user_vote: str | None = None  # "up", "down", or None (not voted / not authenticated)
     solana_tx: str | None = None
+    solana_tx_url: str | None = None
     solana_pda: str | None = None
+    solana_pda_url: str | None = None
 
 
 class AnswerListResponse(BaseModel):

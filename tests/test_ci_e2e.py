@@ -17,7 +17,6 @@ import os
 import json
 import time
 import hashlib
-import subprocess
 import tempfile
 import traceback
 
@@ -99,22 +98,42 @@ def create_temp_keypair() -> tuple[Keypair, str]:
     return kp, path
 
 
-def airdrop_sol(address: str, amount: int = 2, retries: int = 3, delay: int = 15):
-    """Airdrop SOL via the Solana CLI with retry logic."""
+def airdrop_sol(rpc: "SolanaClient", address: str, amount: int = 2, retries: int = 3, delay: int = 15):
+    """Airdrop SOL via the RPC client with retry logic."""
+    pubkey = Pubkey.from_string(address)
+    lamports = amount * 1_000_000_000  # SOL to lamports
     for attempt in range(1, retries + 1):
         print(f"    Airdrop attempt {attempt}/{retries} for {address[:12]}...")
-        result = subprocess.run(
-            ["solana", "airdrop", str(amount), address, "--url", "devnet"],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            print(f"    Airdrop succeeded: {result.stdout.strip()}")
-            return
-        print(f"    Airdrop failed: {result.stderr.strip()}")
+        try:
+            resp = rpc.request_airdrop(pubkey, lamports)
+            sig = resp.value
+            print(f"    Airdrop requested, tx: {sig}")
+            # Wait for confirmation
+            for _ in range(30):
+                time.sleep(2)
+                status = rpc.get_signature_statuses([sig])
+                if status.value[0] is not None:
+                    if status.value[0].err is None:
+                        print(f"    Airdrop confirmed!")
+                        return
+                    else:
+                        print(f"    Airdrop tx failed: {status.value[0].err}")
+                        break
+            print(f"    Airdrop timed out waiting for confirmation")
+        except Exception as e:
+            print(f"    Airdrop failed: {e}")
         if attempt < retries:
             print(f"    Retrying in {delay}s...")
             time.sleep(delay)
     raise RuntimeError(f"Failed to airdrop SOL to {address} after {retries} attempts")
+
+
+def transfer_sol(rpc: SolanaClient, from_keypair: Keypair, to_pubkey: Pubkey, lamports: int = 500_000_000):
+    """Transfer SOL from one wallet to another using a system transfer."""
+    from solders.system_program import transfer, TransferParams
+    ix = transfer(TransferParams(from_pubkey=from_keypair.pubkey(), to_pubkey=to_pubkey, lamports=lamports))
+    sig = build_and_send_tx(rpc, from_keypair, ix)
+    print(f"    Transferred {lamports / 1e9} SOL to {str(to_pubkey)[:12]}..., tx: {sig}")
 
 
 def build_and_send_tx(rpc: SolanaClient, keypair: Keypair, ix: Instruction, retries: int = 3) -> str:
@@ -158,7 +177,13 @@ def register_user_onchain(rpc: SolanaClient, keypair: Keypair, username: str) ->
         AccountMeta(pubkey=SYSTEM_PROGRAM_ID, is_signer=False, is_writable=False),
     ]
     ix = Instruction(program_id, data, accounts)
-    sig = build_and_send_tx(rpc, keypair, ix)
+    try:
+        sig = build_and_send_tx(rpc, keypair, ix)
+    except Exception as e:
+        if "already in use" in str(e):
+            print(f"    UserProfile PDA already exists for {str(wallet)[:12]}..., skipping registration")
+            return SolanaTxResult(signature="already_exists", pda=str(user_profile_pda))
+        raise
     return SolanaTxResult(signature=sig, pda=str(user_profile_pda))
 
 
@@ -406,10 +431,24 @@ def main():
     keypair_b, keypair_b_path = create_temp_keypair()
     print(f"  Agent B wallet: {keypair_b.pubkey()}")
 
-    # Airdrop to Agent B
-    print("\n--- Setup: Airdrop SOL to Agent B ---")
-    airdrop_sol(str(keypair_b.pubkey()), amount=2, retries=3, delay=15)
-    # Small pause to let airdrop settle
+    # Fund wallets - try airdrop first, fall back to transfer
+    print("\n--- Setup: Fund wallets with SOL ---")
+    # Try to airdrop to Agent A (platform wallet) to replenish
+    try:
+        airdrop_sol(rpc, str(keypair_a.pubkey()), amount=2, retries=2, delay=10)
+        print("    Airdropped 2 SOL to Agent A")
+    except RuntimeError:
+        print("    Airdrop to Agent A failed (faucet down), continuing with existing balance")
+
+    # Fund Agent B
+    try:
+        airdrop_sol(rpc, str(keypair_b.pubkey()), amount=2, retries=2, delay=10)
+        print("    Airdropped 2 SOL to Agent B")
+    except RuntimeError:
+        print("    Airdrop to Agent B failed, transferring SOL from Agent A instead...")
+        # Use 0.1 SOL — enough for a few tx, won't drain Agent A
+        transfer_sol(rpc, keypair_a, keypair_b.pubkey(), lamports=100_000_000)  # 0.1 SOL
+    # Small pause to let funding settle
     time.sleep(5)
 
     try:
@@ -418,15 +457,27 @@ def main():
         # ==================================================================
         print("\n--- Step 1: Agent A registers in Supabase ---")
         api_key_a, prefix_a, hash_a = generate_api_key()
-        result = supabase.table("users").insert({
-            "username": AGENT_A_USERNAME,
-            "api_key_prefix": prefix_a,
-            "api_key_hash": hash_a,
-            "wallet_address": str(keypair_a.pubkey()),
-        }).execute()
-        user_a_id = result.data[0]["id"]
+        wallet_a = str(keypair_a.pubkey())
+        # Check if wallet already registered (from a previous run without cleanup)
+        existing = supabase.table("users").select("id").eq("wallet_address", wallet_a).execute()
+        if existing.data:
+            user_a_id = existing.data[0]["id"]
+            # Update API key so this run's key works
+            supabase.table("users").update({
+                "api_key_prefix": prefix_a,
+                "api_key_hash": hash_a,
+            }).eq("id", user_a_id).execute()
+            print(f"  User A ID: {user_a_id} (existing wallet, updated API key)")
+        else:
+            result = supabase.table("users").insert({
+                "username": AGENT_A_USERNAME,
+                "api_key_prefix": prefix_a,
+                "api_key_hash": hash_a,
+                "wallet_address": wallet_a,
+            }).execute()
+            user_a_id = result.data[0]["id"]
+            print(f"  User A ID: {user_a_id}")
         cleanup_ids["users"].append(user_a_id)
-        print(f"  User A ID: {user_a_id}")
 
         # ==================================================================
         # Step 2: Agent A registers on Solana
@@ -543,15 +594,25 @@ def main():
         # ==================================================================
         print("\n--- Step 7: Agent B registers in Supabase ---")
         api_key_b, prefix_b, hash_b = generate_api_key()
-        result = supabase.table("users").insert({
-            "username": AGENT_B_USERNAME,
-            "api_key_prefix": prefix_b,
-            "api_key_hash": hash_b,
-            "wallet_address": str(keypair_b.pubkey()),
-        }).execute()
-        user_b_id = result.data[0]["id"]
+        wallet_b = str(keypair_b.pubkey())
+        existing = supabase.table("users").select("id").eq("wallet_address", wallet_b).execute()
+        if existing.data:
+            user_b_id = existing.data[0]["id"]
+            supabase.table("users").update({
+                "api_key_prefix": prefix_b,
+                "api_key_hash": hash_b,
+            }).eq("id", user_b_id).execute()
+            print(f"  User B ID: {user_b_id} (existing wallet, updated API key)")
+        else:
+            result = supabase.table("users").insert({
+                "username": AGENT_B_USERNAME,
+                "api_key_prefix": prefix_b,
+                "api_key_hash": hash_b,
+                "wallet_address": wallet_b,
+            }).execute()
+            user_b_id = result.data[0]["id"]
+            print(f"  User B ID: {user_b_id}")
         cleanup_ids["users"].append(user_b_id)
-        print(f"  User B ID: {user_b_id}")
 
         # ==================================================================
         # Step 8: Agent B registers on Solana
@@ -693,7 +754,11 @@ def main():
         traceback.print_exc()
         raise
     finally:
-        cleanup(supabase)
+        # Skip cleanup so Supabase data stays in sync with on-chain devnet state.
+        # On-chain accounts (PDAs) are permanent, so keeping Supabase rows ensures
+        # the explorer integrity verification works and data is consistent.
+        # cleanup(supabase)
+
         # Clean up temp keypair file
         try:
             os.unlink(keypair_b_path)

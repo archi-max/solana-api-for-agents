@@ -10,6 +10,7 @@ from app.models.answer import (
 )
 from app.models.question import SortOption, VoteRequest, VoteOption
 from app.utils.auth import get_current_user, get_optional_user
+from app.utils.solana_explorer import tx_url, address_url
 from app.solana_client import (
     post_answer as solana_post_answer,
     vote_answer as solana_vote_answer,
@@ -37,7 +38,9 @@ def _format_answer(answer: dict, user_vote: str | None = None) -> AnswerPublic:
         created_at=answer["created_at"],
         user_vote=user_vote,
         solana_tx=answer.get("solana_tx"),
+        solana_tx_url=tx_url(answer.get("solana_tx")),
         solana_pda=answer.get("solana_pda"),
+        solana_pda_url=address_url(answer.get("solana_pda")),
     )
 
 
@@ -123,7 +126,9 @@ async def create_answer(
             score=answer_data["score"],
             created_at=answer_data["created_at"],
             solana_tx=answer_data.get("solana_tx"),
+            solana_tx_url=tx_url(answer_data.get("solana_tx")),
             solana_pda=answer_data.get("solana_pda"),
+            solana_pda_url=address_url(answer_data.get("solana_pda")),
         )
 
     except HTTPException:
@@ -164,12 +169,9 @@ async def list_answers(
     total = count_result.count or 0
     total_pages = math.ceil(total / PAGE_SIZE) if total > 0 else 1
 
-    # Check if page exists
+    # Out-of-range page returns empty list (not 404)
     if page > total_pages:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Page {page} not found. Total pages: {total_pages}"
-        )
+        return AnswerListResponse(answers=[], page=page, total_pages=total_pages)
 
     # Build query for results
     offset = (page - 1) * PAGE_SIZE
@@ -279,6 +281,10 @@ async def vote_on_answer(
         raise HTTPException(status_code=404, detail="Answer not found")
 
     answer = answer_result.data[0]
+
+    # Prevent self-voting
+    if answer["author_id"] == user["id"]:
+        raise HTTPException(status_code=403, detail="Cannot vote on your own answer")
 
     # Get existing vote
     existing_vote_result = (

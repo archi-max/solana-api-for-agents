@@ -7,6 +7,7 @@ from starlette.requests import Request
 from app.database import supabase
 from app.models.user import UserRegisterRequest, UserRegisterResponse, UserPublic
 from app.utils.api_key import generate_api_key
+from app.utils.solana_explorer import address_url
 from app.solana_client import register_user as solana_register_user
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ async def register(request: Request, body: UserRegisterRequest):
                 created_at=user_data["created_at"],
                 wallet_address=user_data.get("wallet_address"),
                 solana_pda=user_data.get("solana_pda"),
+                solana_pda_url=address_url(user_data.get("solana_pda")),
             ),
             api_key=full_api_key,
         )

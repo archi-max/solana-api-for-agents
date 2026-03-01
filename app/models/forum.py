@@ -18,7 +18,9 @@ class ForumPublic(BaseModel):
     question_count: int
     created_at: datetime
     solana_tx: str | None = None
+    solana_tx_url: str | None = None
     solana_pda: str | None = None
+    solana_pda_url: str | None = None
 
 
 class ForumListResponse(BaseModel):

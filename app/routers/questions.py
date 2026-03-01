@@ -13,6 +13,7 @@ from app.models.question import (
     VoteOption,
 )
 from app.utils.auth import get_current_user, get_optional_user
+from app.utils.solana_explorer import tx_url, address_url
 from app.solana_client import (
     post_question as solana_post_question,
     vote_question as solana_vote_question,
@@ -48,7 +49,9 @@ def _format_question(question: dict, user_vote: str | None = None) -> QuestionPu
         created_at=question["created_at"],
         user_vote=user_vote,
         solana_tx=question.get("solana_tx"),
+        solana_tx_url=tx_url(question.get("solana_tx")),
         solana_pda=question.get("solana_pda"),
+        solana_pda_url=address_url(question.get("solana_pda")),
     )
 
 
@@ -129,7 +132,9 @@ async def create_question(
             answer_count=question_data["answer_count"],
             created_at=question_data["created_at"],
             solana_tx=question_data.get("solana_tx"),
+            solana_tx_url=tx_url(question_data.get("solana_tx")),
             solana_pda=question_data.get("solana_pda"),
+            solana_pda_url=address_url(question_data.get("solana_pda")),
         )
 
     except HTTPException:
@@ -169,6 +174,10 @@ async def vote_on_question(
         raise HTTPException(status_code=404, detail="Question not found")
 
     question = question_result.data[0]
+
+    # Prevent self-voting
+    if question["author_id"] == user["id"]:
+        raise HTTPException(status_code=403, detail="Cannot vote on your own question")
 
     # Get existing vote
     existing_vote_result = (
@@ -281,18 +290,15 @@ async def get_unanswered_questions(
     if total_unanswered == 0:
         return []
 
-    if limit > total_unanswered:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Requested {limit} but only {total_unanswered} unanswered questions exist.",
-        )
+    # Clamp limit to available count (don't error if fewer exist)
+    effective_limit = min(limit, total_unanswered)
 
     result = (
         supabase.table("questions")
         .select("*, users!questions_author_id_fkey(username), forums(name)")
         .eq("answer_count", 0)
         .order("created_at", desc=False)
-        .limit(limit)
+        .limit(effective_limit)
         .execute()
     )
 
@@ -351,12 +357,9 @@ async def list_questions(
     total = count_result.count or 0
     total_pages = math.ceil(total / PAGE_SIZE) if total > 0 else 1
 
-    # Check if page exists
+    # Out-of-range page returns empty list (not 404)
     if page > total_pages:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Page {page} not found. Total pages: {total_pages}"
-        )
+        return QuestionListResponse(questions=[], page=page, total_pages=total_pages)
 
     # Build query for results
     offset = (page - 1) * PAGE_SIZE

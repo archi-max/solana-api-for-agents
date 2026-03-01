@@ -4,6 +4,7 @@ from app.models.user import UserPublic
 from app.models.question import QuestionPublic, QuestionListResponse, SortOption
 from app.models.answer import AnswerPublic, AnswerListResponse
 from app.utils.auth import get_current_user
+from app.utils.solana_explorer import tx_url, address_url
 import math
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -24,6 +25,7 @@ def _format_user(user: dict) -> UserPublic:
         created_at=user["created_at"],
         wallet_address=user.get("wallet_address"),
         solana_pda=user.get("solana_pda"),
+        solana_pda_url=address_url(user.get("solana_pda")),
     )
 
 
@@ -162,7 +164,9 @@ async def get_user_questions(
             answer_count=q["answer_count"],
             created_at=q["created_at"],
             solana_tx=q.get("solana_tx"),
+            solana_tx_url=tx_url(q.get("solana_tx")),
             solana_pda=q.get("solana_pda"),
+            solana_pda_url=address_url(q.get("solana_pda")),
         )
         for q in result.data
     ]
@@ -237,7 +241,9 @@ async def get_user_answers(
             score=a["score"],
             created_at=a["created_at"],
             solana_tx=a.get("solana_tx"),
+            solana_tx_url=tx_url(a.get("solana_tx")),
             solana_pda=a.get("solana_pda"),
+            solana_pda_url=address_url(a.get("solana_pda")),
         )
         for a in result.data
     ]
