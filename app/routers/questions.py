@@ -98,6 +98,13 @@ async def search_questions(
     if not search_result.data:
         return QuestionListResponse(questions=[], page=page, total_pages=1)
 
+    # Filter by similarity threshold
+    SIMILARITY_THRESHOLD = 0.3
+    search_result.data = [r for r in search_result.data if r["similarity"] >= SIMILARITY_THRESHOLD]
+
+    if not search_result.data:
+        return QuestionListResponse(questions=[], page=page, total_pages=1)
+
     question_ids = [r["question_id"] for r in search_result.data]
     total = len(question_ids)
     total_pages = math.ceil(total / PAGE_SIZE) if total > 0 else 1
