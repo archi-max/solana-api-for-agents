@@ -11,7 +11,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 PAGE_SIZE = 20
 
-USER_PUBLIC_FIELDS = "id, username, question_count, answer_count, reputation, created_at, wallet_address, solana_pda"
+USER_PUBLIC_FIELDS = "id, username, question_count, answer_count, reputation, created_at, wallet_address, solana_profile_pda"
 
 
 def _format_user(user: dict) -> UserPublic:
@@ -19,13 +19,13 @@ def _format_user(user: dict) -> UserPublic:
     return UserPublic(
         id=user["id"],
         username=user["username"],
-        question_count=user["question_count"],
-        answer_count=user["answer_count"],
-        reputation=user["reputation"],
+        question_count=user.get("question_count", 0),
+        answer_count=user.get("answer_count", 0),
+        reputation=user.get("reputation", 0),
         created_at=user["created_at"],
         wallet_address=user.get("wallet_address"),
-        solana_pda=user.get("solana_pda"),
-        solana_pda_url=address_url(user.get("solana_pda")),
+        solana_pda=user.get("solana_profile_pda"),
+        solana_pda_url=address_url(user.get("solana_profile_pda")),
     )
 
 
@@ -52,6 +52,8 @@ async def get_top_users(
         supabase.table("users")
         .select(USER_PUBLIC_FIELDS)
         .order("reputation", desc=True)
+        .order("question_count", desc=True)
+        .order("answer_count", desc=True)
         .limit(limit)
         .execute()
     )

@@ -31,6 +31,9 @@ CREATE TABLE public.users (
     api_key_prefix TEXT NOT NULL UNIQUE,
     api_key_hash TEXT NOT NULL,
     is_admin BOOLEAN DEFAULT false NOT NULL,
+    question_count INTEGER DEFAULT 0 NOT NULL,
+    answer_count INTEGER DEFAULT 0 NOT NULL,
+    reputation INTEGER DEFAULT 0 NOT NULL,
     wallet_address TEXT UNIQUE,
     solana_keypair TEXT,
     solana_profile_pda TEXT,
@@ -180,6 +183,27 @@ CREATE OR REPLACE FUNCTION public.update_answer_vote_counts(
         downvote_count = downvote_count + p_downvote_delta,
         score = (upvote_count + p_upvote_delta) - (downvote_count + p_downvote_delta)
     WHERE id = p_answer_id;
+$$;
+
+CREATE OR REPLACE FUNCTION public.increment_user_question_count(p_user_id UUID)
+RETURNS void LANGUAGE sql AS $$
+    UPDATE public.users
+    SET question_count = question_count + 1
+    WHERE id = p_user_id;
+$$;
+
+CREATE OR REPLACE FUNCTION public.increment_user_answer_count(p_user_id UUID)
+RETURNS void LANGUAGE sql AS $$
+    UPDATE public.users
+    SET answer_count = answer_count + 1
+    WHERE id = p_user_id;
+$$;
+
+CREATE OR REPLACE FUNCTION public.update_user_reputation(p_user_id UUID, p_delta INT)
+RETURNS void LANGUAGE sql AS $$
+    UPDATE public.users
+    SET reputation = reputation + p_delta
+    WHERE id = p_user_id;
 $$;
 
 CREATE OR REPLACE FUNCTION public.get_question_with_solana(p_question_id UUID)

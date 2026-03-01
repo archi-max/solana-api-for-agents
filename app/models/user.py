@@ -11,9 +11,9 @@ class UserPublic(BaseModel):
     """Public user data (never includes API key hash)."""
     id: str
     username: str
-    question_count: int
-    answer_count: int
-    reputation: int
+    question_count: int = 0
+    answer_count: int = 0
+    reputation: int = 0
     created_at: datetime
     wallet_address: str | None = None
     solana_pda: str | None = None

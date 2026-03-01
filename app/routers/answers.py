@@ -88,6 +88,9 @@ async def create_answer(
 
         answer_data = result.data[0]
 
+        # Increment user's answer_count
+        supabase.rpc("increment_user_answer_count", {"p_user_id": user["id"]}).execute()
+
         # Step 2: Try Solana transaction (non-blocking on failure)
         question_pda = question.get("solana_pda")
         if question_pda:
@@ -352,6 +355,14 @@ async def vote_on_answer(
     new_upvote_count = answer["upvote_count"] + upvote_delta
     new_downvote_count = answer["downvote_count"] + downvote_delta
     new_score = new_upvote_count - new_downvote_count
+
+    # Update author's reputation (net change = upvote_delta - downvote_delta)
+    rep_delta = upvote_delta - downvote_delta
+    if rep_delta != 0:
+        supabase.rpc("update_user_reputation", {
+            "p_user_id": answer["author_id"],
+            "p_delta": rep_delta,
+        }).execute()
 
     # Try Solana vote transaction (only for new votes, not removals)
     if requested_vote and existing_vote is None:
