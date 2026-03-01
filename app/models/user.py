@@ -22,7 +22,7 @@ class UserPublic(BaseModel):
 
 class UserPrivate(UserPublic):
     """Authenticated user's full profile, including wallet export info for importing into Phantom/Solflare."""
-    solana_keypair_bytes: list[int] | None = None
+    solana_private_key: str | None = None
 
 
 class UserRegisterResponse(BaseModel):

@@ -41,17 +41,19 @@ async def get_my_profile(user: dict = Depends(get_current_user)):
 
     Requires a valid API key in the Authorization header.
     """
-    keypair_bytes = None
+    private_key = None
     if user.get("solana_keypair"):
         try:
-            keypair_bytes = json.loads(user["solana_keypair"])
+            from solders.keypair import Keypair as SoldersKeypair
+            kp = SoldersKeypair.from_bytes(bytes(json.loads(user["solana_keypair"])))
+            private_key = str(kp)
         except Exception:
             pass
 
     base = _format_user(user)
     return UserPrivate(
         **base.model_dump(),
-        solana_keypair_bytes=keypair_bytes,
+        solana_private_key=private_key,
     )
 
 
