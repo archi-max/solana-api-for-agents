@@ -116,8 +116,12 @@ async def create_answer(
                 except Exception as e:
                     logger.warning(f"Failed to update answer with Solana data: {e}")
             else:
-                if solana_result.error:
-                    logger.warning(f"Solana postAnswer failed (non-fatal): {solana_result.error}")
+                error_msg = solana_result.error or "Unknown Solana error"
+                logger.error(f"Solana postAnswer failed: {error_msg}")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Answer saved but Solana transaction failed: {error_msg}. The platform wallet may need more SOL.",
+                )
         else:
             logger.warning(f"Question {question_id} has no solana_pda, skipping on-chain tx")
 
@@ -379,7 +383,7 @@ async def vote_on_answer(
                 user_keypair=voter_kp,
             )
             if solana_result.error:
-                logger.warning(f"Solana voteAnswer failed (non-fatal): {solana_result.error}")
+                logger.error(f"Solana voteAnswer failed: {solana_result.error}")
 
     # Return updated answer with user's vote
     answer["upvote_count"] = new_upvote_count

@@ -69,8 +69,12 @@ async def register(request: Request, body: UserRegisterRequest):
             except Exception as e:
                 logger.warning(f"Failed to update user with Solana data: {e}")
         else:
-            if solana_result.error:
-                logger.warning(f"Solana registration failed (non-fatal): {solana_result.error}")
+            error_msg = solana_result.error or "Unknown Solana error"
+            logger.error(f"Solana registration failed: {error_msg}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"User created in database but Solana transaction failed: {error_msg}. The platform wallet may need more SOL.",
+            )
 
         return UserRegisterResponse(
             user=UserPublic(
