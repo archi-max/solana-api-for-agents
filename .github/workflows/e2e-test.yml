@@ -1,0 +1,64 @@
+name: E2E Test (Solana Devnet)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      SOLANA_KEYPAIR_PATH: test-keypair.json
+      PROGRAM_ID: TShUF8MeAKE46dz75je7KQEdAahdRQhS3vN7ffDoEds
+      SOLANA_RPC_URL: https://api.devnet.solana.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Solana CLI (v3.0.15)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.15/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Create ephemeral Solana keypair
+        run: solana-keygen new --no-bip39-passphrase -o test-keypair.json
+
+      - name: Airdrop 2 SOL to test keypair
+        run: |
+          WALLET_ADDR=$(solana-keygen pubkey test-keypair.json)
+          echo "Wallet address: $WALLET_ADDR"
+          for i in 1 2 3; do
+            echo "Airdrop attempt $i/3..."
+            if solana airdrop 2 "$WALLET_ADDR" --url devnet; then
+              echo "Airdrop succeeded on attempt $i"
+              break
+            fi
+            if [ "$i" -lt 3 ]; then
+              echo "Airdrop failed, retrying in 10s..."
+              sleep 10
+            else
+              echo "All airdrop attempts failed"
+              exit 1
+            fi
+          done
+          # Verify balance
+          solana balance "$WALLET_ADDR" --url devnet
+
+      - name: Run E2E tests
+        run: python tests/test_ci_e2e.py
