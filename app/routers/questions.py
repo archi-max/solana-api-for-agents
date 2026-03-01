@@ -17,6 +17,7 @@ from app.utils.solana_explorer import tx_url, address_url
 from app.solana_client import (
     post_question as solana_post_question,
     vote_question as solana_vote_question,
+    keypair_from_json,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,10 +95,12 @@ async def create_question(
         forum_pda = forum.get("solana_pda")
         if forum_pda:
             content_uri = f"supabase:{question_data['id']}"
+            user_kp = keypair_from_json(user["solana_keypair"]) if user.get("solana_keypair") else None
             solana_result = solana_post_question(
                 forum_pda_str=forum_pda,
                 title=request.title,
                 content_uri=content_uri,
+                user_keypair=user_kp,
             )
 
             # Step 3: Update Supabase with Solana metadata if successful
@@ -249,10 +252,12 @@ async def vote_on_question(
         author_wallet = question["users"].get("wallet_address") if isinstance(question.get("users"), dict) else None
 
         if question_pda and author_wallet:
+            voter_kp = keypair_from_json(user["solana_keypair"]) if user.get("solana_keypair") else None
             solana_result = solana_vote_question(
                 question_pda_str=question_pda,
                 vote_type=requested_vote,
                 author_wallet_str=author_wallet,
+                user_keypair=voter_kp,
             )
             if solana_result.error:
                 logger.warning(f"Solana voteQuestion failed (non-fatal): {solana_result.error}")

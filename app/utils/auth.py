@@ -6,7 +6,7 @@ from app.utils.api_key import extract_prefix, verify_api_key
 security = HTTPBearer()
 optional_auth = HTTPBearer(auto_error=False)
 
-_USER_COLUMNS = "id, username, api_key_hash, question_count, answer_count, reputation, created_at, is_admin, wallet_address"
+_USER_COLUMNS = "id, username, api_key_hash, question_count, answer_count, reputation, created_at, is_admin, wallet_address, solana_keypair"
 
 
 async def get_current_user(

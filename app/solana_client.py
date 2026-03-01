@@ -2,7 +2,7 @@
 Solana client helper for building and submitting transactions to the ChatOverflow program.
 
 Uses solders/solana-py/anchorpy to interact with the on-chain program.
-The server holds a single platform authority keypair that signs all transactions.
+Each user has their own Solana keypair; the platform keypair acts as fee payer.
 """
 
 import json
@@ -69,6 +69,12 @@ def _load_keypair() -> Keypair | None:
     except Exception as e:
         logger.warning(f"Failed to load Solana keypair: {e}")
         return None
+
+
+def keypair_from_json(json_str: str) -> Keypair:
+    """Reconstruct a Keypair from JSON-encoded secret key bytes (as stored in Supabase)."""
+    secret_bytes = json.loads(json_str)
+    return Keypair.from_bytes(bytes(secret_bytes))
 
 
 def _get_program_id() -> Pubkey:
@@ -172,12 +178,15 @@ def _encode_vote_type(vote_type: str) -> bytes:
 
 def _build_and_send_tx(
     rpc: SolanaClient,
-    keypair: Keypair,
+    fee_payer: Keypair,
     instruction: Instruction,
+    additional_signers: list[Keypair] | None = None,
     retries: int = 3,
 ) -> str:
-    """Build, sign, and send a transaction. Returns the signature string."""
+    """Build, sign, and send a transaction. fee_payer pays SOL fees; additional_signers co-sign."""
     import time
+
+    all_signers = [fee_payer] + (additional_signers or [])
 
     for attempt in range(retries):
         try:
@@ -186,11 +195,11 @@ def _build_and_send_tx(
 
             message = Message.new_with_blockhash(
                 [instruction],
-                keypair.pubkey(),
+                fee_payer.pubkey(),
                 blockhash,
             )
             tx = Transaction.new_unsigned(message)
-            tx.sign([keypair], blockhash)
+            tx.sign(all_signers, blockhash)
 
             opts = TxOpts(
                 skip_preflight=False,
@@ -212,24 +221,26 @@ def _build_and_send_tx(
 
 # --- Public API functions ---
 
-def register_user(wallet_address: str, username: str) -> SolanaTxResult:
+def register_user(wallet_address: str, username: str, user_keypair: Keypair | None = None) -> SolanaTxResult:
     """
     Call registerUser instruction on-chain.
     Creates a UserProfile PDA and associated token account for $OVERFLOW.
+    If user_keypair is provided, it signs the tx (platform keypair pays fees).
     """
     try:
-        keypair = _load_keypair()
-        if not keypair:
+        platform_kp = _load_keypair()
+        if not platform_kp:
             return SolanaTxResult(signature=None, pda=None, error="Keypair not configured")
 
         rpc = _get_rpc_client()
         program_id = _get_program_id()
 
-        wallet = keypair.pubkey()
+        # Use user's keypair for wallet identity; fall back to platform
+        wallet_kp = user_keypair or platform_kp
+        wallet = wallet_kp.pubkey()
         user_profile_pda, _ = find_user_profile_pda(wallet)
         user_token_account = get_associated_token_address(wallet, REWARD_MINT)
 
-        # Build instruction data: discriminator + username string
         data = DISCRIMINATORS["register_user"] + _encode_string(username)
 
         accounts = [
@@ -243,7 +254,8 @@ def register_user(wallet_address: str, username: str) -> SolanaTxResult:
         ]
 
         ix = Instruction(program_id, data, accounts)
-        sig = _build_and_send_tx(rpc, keypair, ix)
+        extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
+        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,
@@ -255,21 +267,22 @@ def register_user(wallet_address: str, username: str) -> SolanaTxResult:
         return SolanaTxResult(signature=None, pda=None, error=str(e))
 
 
-def create_forum(name: str) -> SolanaTxResult:
+def create_forum(name: str, user_keypair: Keypair | None = None) -> SolanaTxResult:
     """
     Call createForum instruction on-chain.
-    Creates a Forum PDA.
+    Creates a Forum PDA. user_keypair signs as authority; platform keypair pays fees.
     """
     try:
-        keypair = _load_keypair()
-        if not keypair:
+        platform_kp = _load_keypair()
+        if not platform_kp:
             return SolanaTxResult(signature=None, pda=None, error="Keypair not configured")
 
         rpc = _get_rpc_client()
         program_id = _get_program_id()
 
+        authority_kp = user_keypair or platform_kp
         forum_pda, _ = find_forum_pda(name)
-        authority = keypair.pubkey()
+        authority = authority_kp.pubkey()
 
         data = DISCRIMINATORS["create_forum"] + _encode_string(name)
 
@@ -280,7 +293,8 @@ def create_forum(name: str) -> SolanaTxResult:
         ]
 
         ix = Instruction(program_id, data, accounts)
-        sig = _build_and_send_tx(rpc, keypair, ix)
+        extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
+        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,
@@ -292,21 +306,22 @@ def create_forum(name: str) -> SolanaTxResult:
         return SolanaTxResult(signature=None, pda=None, error=str(e))
 
 
-def post_question(forum_pda_str: str, title: str, content_uri: str) -> SolanaTxResult:
+def post_question(forum_pda_str: str, title: str, content_uri: str, user_keypair: Keypair | None = None) -> SolanaTxResult:
     """
     Call postQuestion instruction on-chain.
-    Creates a Question PDA. Requires fetching the current forum.question_count first.
+    Creates a Question PDA. user_keypair signs as author; platform keypair pays fees.
     """
     try:
-        keypair = _load_keypair()
-        if not keypair:
+        platform_kp = _load_keypair()
+        if not platform_kp:
             return SolanaTxResult(signature=None, pda=None, error="Keypair not configured")
 
         rpc = _get_rpc_client()
         program_id = _get_program_id()
 
+        author_kp = user_keypair or platform_kp
         forum_pubkey = Pubkey.from_string(forum_pda_str)
-        author = keypair.pubkey()
+        author = author_kp.pubkey()
         author_profile_pda, _ = find_user_profile_pda(author)
 
         # We need the current question_count from the forum account.
@@ -345,7 +360,8 @@ def post_question(forum_pda_str: str, title: str, content_uri: str) -> SolanaTxR
         ]
 
         ix = Instruction(program_id, data, accounts)
-        sig = _build_and_send_tx(rpc, keypair, ix)
+        extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
+        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,
@@ -357,21 +373,22 @@ def post_question(forum_pda_str: str, title: str, content_uri: str) -> SolanaTxR
         return SolanaTxResult(signature=None, pda=None, error=str(e))
 
 
-def post_answer(question_pda_str: str, content_uri: str) -> SolanaTxResult:
+def post_answer(question_pda_str: str, content_uri: str, user_keypair: Keypair | None = None) -> SolanaTxResult:
     """
     Call postAnswer instruction on-chain.
-    Creates an Answer PDA. Requires fetching the current question.answer_count first.
+    Creates an Answer PDA. user_keypair signs as author; platform keypair pays fees.
     """
     try:
-        keypair = _load_keypair()
-        if not keypair:
+        platform_kp = _load_keypair()
+        if not platform_kp:
             return SolanaTxResult(signature=None, pda=None, error="Keypair not configured")
 
         rpc = _get_rpc_client()
         program_id = _get_program_id()
 
+        author_kp = user_keypair or platform_kp
         question_pubkey = Pubkey.from_string(question_pda_str)
-        author = keypair.pubkey()
+        author = author_kp.pubkey()
         author_profile_pda, _ = find_user_profile_pda(author)
 
         # Fetch the question account to get answer_count.
@@ -411,7 +428,8 @@ def post_answer(question_pda_str: str, content_uri: str) -> SolanaTxResult:
         ]
 
         ix = Instruction(program_id, data, accounts)
-        sig = _build_and_send_tx(rpc, keypair, ix)
+        extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
+        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,
@@ -427,27 +445,25 @@ def vote_question(
     question_pda_str: str,
     vote_type: str,
     author_wallet_str: str,
+    user_keypair: Keypair | None = None,
 ) -> SolanaTxResult:
     """
     Call voteQuestion instruction on-chain.
     Creates a Vote PDA. Upvotes mint $OVERFLOW tokens to the question author.
-
-    Args:
-        question_pda_str: The question PDA address string.
-        vote_type: "up" or "down".
-        author_wallet_str: The question author's wallet address (to derive their profile + token account).
+    user_keypair signs as voter; platform keypair pays fees.
     """
     try:
-        keypair = _load_keypair()
-        if not keypair:
+        platform_kp = _load_keypair()
+        if not platform_kp:
             return SolanaTxResult(signature=None, pda=None, error="Keypair not configured")
 
         rpc = _get_rpc_client()
         program_id = _get_program_id()
 
+        voter_kp = user_keypair or platform_kp
         question_pubkey = Pubkey.from_string(question_pda_str)
         author_wallet = Pubkey.from_string(author_wallet_str)
-        voter = keypair.pubkey()
+        voter = voter_kp.pubkey()
 
         vote_pda, _ = find_vote_pda(voter, question_pubkey)
         author_profile_pda, _ = find_user_profile_pda(author_wallet)
@@ -470,7 +486,8 @@ def vote_question(
         ]
 
         ix = Instruction(program_id, data, accounts)
-        sig = _build_and_send_tx(rpc, keypair, ix)
+        extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
+        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,
@@ -486,27 +503,25 @@ def vote_answer(
     answer_pda_str: str,
     vote_type: str,
     author_wallet_str: str,
+    user_keypair: Keypair | None = None,
 ) -> SolanaTxResult:
     """
     Call voteAnswer instruction on-chain.
     Creates a Vote PDA. Upvotes mint $OVERFLOW tokens to the answer author.
-
-    Args:
-        answer_pda_str: The answer PDA address string.
-        vote_type: "up" or "down".
-        author_wallet_str: The answer author's wallet address.
+    user_keypair signs as voter; platform keypair pays fees.
     """
     try:
-        keypair = _load_keypair()
-        if not keypair:
+        platform_kp = _load_keypair()
+        if not platform_kp:
             return SolanaTxResult(signature=None, pda=None, error="Keypair not configured")
 
         rpc = _get_rpc_client()
         program_id = _get_program_id()
 
+        voter_kp = user_keypair or platform_kp
         answer_pubkey = Pubkey.from_string(answer_pda_str)
         author_wallet = Pubkey.from_string(author_wallet_str)
-        voter = keypair.pubkey()
+        voter = voter_kp.pubkey()
 
         vote_pda, _ = find_vote_pda(voter, answer_pubkey)
         author_profile_pda, _ = find_user_profile_pda(author_wallet)
@@ -529,7 +544,8 @@ def vote_answer(
         ]
 
         ix = Instruction(program_id, data, accounts)
-        sig = _build_and_send_tx(rpc, keypair, ix)
+        extra = [user_keypair] if user_keypair and user_keypair != platform_kp else None
+        sig = _build_and_send_tx(rpc, platform_kp, ix, additional_signers=extra)
 
         return SolanaTxResult(
             signature=sig,

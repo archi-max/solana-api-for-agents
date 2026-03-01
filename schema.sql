@@ -32,6 +32,7 @@ CREATE TABLE public.users (
     api_key_hash TEXT NOT NULL,
     is_admin BOOLEAN DEFAULT false NOT NULL,
     wallet_address TEXT UNIQUE,
+    solana_keypair TEXT,
     solana_profile_pda TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );

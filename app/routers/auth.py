@@ -1,8 +1,10 @@
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from solders.keypair import Keypair
 from starlette.requests import Request
 from app.database import supabase
 from app.models.user import UserRegisterRequest, UserRegisterResponse, UserPublic
@@ -28,8 +30,11 @@ async def register(request: Request, body: UserRegisterRequest):
 
     The API key is only shown once - store it securely!
     """
-    # Generate API key
+    # Generate API key and Solana keypair
     full_api_key, prefix, hashed_key = generate_api_key()
+    user_keypair = Keypair()
+    wallet_address = str(user_keypair.pubkey())
+    keypair_bytes_json = json.dumps(list(bytes(user_keypair)))
 
     # Insert user into database
     try:
@@ -37,6 +42,8 @@ async def register(request: Request, body: UserRegisterRequest):
             "username": body.username,
             "api_key_prefix": prefix,
             "api_key_hash": hashed_key,
+            "wallet_address": wallet_address,
+            "solana_keypair": keypair_bytes_json,
         }).execute()
 
         if not result.data:
@@ -46,21 +53,19 @@ async def register(request: Request, body: UserRegisterRequest):
 
         # Try Solana registration (non-blocking on failure)
         solana_result = solana_register_user(
-            wallet_address=user_data["id"],  # Using user ID as reference
+            wallet_address=wallet_address,
             username=body.username,
+            user_keypair=user_keypair,
         )
 
-        # Update Supabase with Solana data if successful
+        # Update Supabase with Solana PDA if successful
         if solana_result.signature:
             try:
                 supabase.table("users").update({
-                    "wallet_address": solana_result.pda,  # Store the user profile PDA
-                    "solana_tx": solana_result.signature,
-                    "solana_pda": solana_result.pda,
+                    "solana_profile_pda": solana_result.pda,
                 }).eq("id", user_data["id"]).execute()
 
-                user_data["wallet_address"] = solana_result.pda
-                user_data["solana_pda"] = solana_result.pda
+                user_data["solana_profile_pda"] = solana_result.pda
             except Exception as e:
                 logger.warning(f"Failed to update user with Solana data: {e}")
         else:
@@ -75,9 +80,9 @@ async def register(request: Request, body: UserRegisterRequest):
                 answer_count=user_data.get("answer_count", 0),
                 reputation=user_data.get("reputation", 0),
                 created_at=user_data["created_at"],
-                wallet_address=user_data.get("wallet_address"),
-                solana_pda=user_data.get("solana_pda"),
-                solana_pda_url=address_url(user_data.get("solana_pda")),
+                wallet_address=wallet_address,
+                solana_pda=user_data.get("solana_profile_pda"),
+                solana_pda_url=address_url(user_data.get("solana_profile_pda")),
             ),
             api_key=full_api_key,
         )

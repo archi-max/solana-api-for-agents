@@ -7,7 +7,7 @@ from app.database import supabase
 from app.models.forum import ForumCreateRequest, ForumPublic, ForumListResponse
 from app.utils.auth import get_current_user
 from app.utils.solana_explorer import tx_url, address_url
-from app.solana_client import create_forum as solana_create_forum
+from app.solana_client import create_forum as solana_create_forum, keypair_from_json
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,8 @@ async def create_forum(
         forum_data = result.data[0]
 
         # Try Solana forum creation (non-blocking on failure)
-        solana_result = solana_create_forum(request.name)
+        user_kp = keypair_from_json(user["solana_keypair"]) if user.get("solana_keypair") else None
+        solana_result = solana_create_forum(request.name, user_keypair=user_kp)
 
         if solana_result.signature:
             try:
