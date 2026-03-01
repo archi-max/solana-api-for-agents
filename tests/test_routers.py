@@ -389,3 +389,135 @@ class TestExplorerUrlConsistency:
         u_fields = UserPublic.model_fields
         assert "solana_tx_url" not in u_fields
         assert "solana_tx" not in u_fields
+
+
+# ---------------------------------------------------------------------------
+# Users Router
+# ---------------------------------------------------------------------------
+
+def _make_supabase_user(uid="u1", username="alice"):
+    return {
+        "id": uid,
+        "username": username,
+        "question_count": 5,
+        "answer_count": 3,
+        "reputation": 12,
+        "created_at": NOW,
+        "wallet_address": "4siAVfbB1mYhaWUf4AaVs4E3K6bbZDNRyKTL58EDmvPc",
+        "solana_profile_pda": "Db1zfaZ83GGrVU3UuNMYQC6r2Mj3V2RsqZuBFpoVzMRz",
+    }
+
+
+class TestUsersRouter:
+    @patch("app.routers.users.supabase")
+    def test_get_top_users(self, mock_sb, test_client):
+        u = _make_supabase_user()
+        chain = _mock_chain(data=[u])
+        mock_sb.table.return_value = chain
+
+        resp = test_client.get("/users/top")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["username"] == "alice"
+        assert data[0]["question_count"] == 5
+        assert data[0]["answer_count"] == 3
+        assert data[0]["reputation"] == 12
+        assert data[0]["solana_pda_url"] is not None
+        assert "explorer.solana.com/address/" in data[0]["solana_pda_url"]
+
+    @patch("app.routers.users.supabase")
+    def test_get_top_users_with_limit(self, mock_sb, test_client):
+        users = [_make_supabase_user(uid=f"u{i}", username=f"user{i}") for i in range(3)]
+        chain = _mock_chain(data=users)
+        mock_sb.table.return_value = chain
+
+        resp = test_client.get("/users/top?limit=3")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 3
+
+    @patch("app.routers.users.supabase")
+    def test_get_user_by_id(self, mock_sb, test_client):
+        u = _make_supabase_user(uid="u42")
+        chain = _mock_chain(data=[u])
+        mock_sb.table.return_value = chain
+
+        resp = test_client.get("/users/u42")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == "u42"
+        assert data["wallet_address"] is not None
+
+    @patch("app.routers.users.supabase")
+    def test_get_user_by_id_not_found(self, mock_sb, test_client):
+        chain = _mock_chain(data=[])
+        mock_sb.table.return_value = chain
+
+        resp = test_client.get("/users/nonexistent")
+        assert resp.status_code == 404
+
+    @patch("app.routers.users.supabase")
+    def test_get_user_by_username(self, mock_sb, test_client):
+        u = _make_supabase_user(username="bob_agent")
+        chain = _mock_chain(data=[u])
+        mock_sb.table.return_value = chain
+
+        resp = test_client.get("/users/username/bob_agent")
+        assert resp.status_code == 200
+        assert resp.json()["username"] == "bob_agent"
+
+    @patch("app.routers.users.supabase")
+    def test_get_user_by_username_not_found(self, mock_sb, test_client):
+        chain = _mock_chain(data=[])
+        mock_sb.table.return_value = chain
+
+        resp = test_client.get("/users/username/nobody")
+        assert resp.status_code == 404
+
+    @patch("app.routers.users.supabase")
+    def test_get_user_null_solana_pda(self, mock_sb, test_client):
+        u = _make_supabase_user()
+        u["solana_profile_pda"] = None
+        chain = _mock_chain(data=[u])
+        mock_sb.table.return_value = chain
+
+        resp = test_client.get("/users/u1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["solana_pda"] is None
+        assert data["solana_pda_url"] is None
+
+    def test_get_me_requires_auth(self, test_client):
+        resp = test_client.get("/users/me")
+        assert resp.status_code in (401, 403)
+
+    @patch("app.routers.users.supabase")
+    def test_get_me_authenticated(self, mock_sb, authed_client):
+        resp = authed_client.get("/users/me")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["username"] == "testuser"
+
+    @patch("app.routers.users.supabase")
+    def test_get_user_questions(self, mock_sb, test_client):
+        q = _make_supabase_question()
+        chain = _mock_chain(data=[q], count=1)
+        mock_sb.table.return_value = chain
+
+        resp = test_client.get("/users/u1/questions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "questions" in data
+        assert data["total_pages"] >= 1
+
+    @patch("app.routers.users.supabase")
+    def test_get_user_answers(self, mock_sb, test_client):
+        a = _make_supabase_answer()
+        chain = _mock_chain(data=[a], count=1)
+        mock_sb.table.return_value = chain
+
+        resp = test_client.get("/users/u1/answers")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "answers" in data
+        assert data["total_pages"] >= 1
