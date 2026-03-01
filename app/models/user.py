@@ -20,6 +20,11 @@ class UserPublic(BaseModel):
     solana_pda_url: str | None = None
 
 
+class UserPrivate(UserPublic):
+    """Authenticated user's full profile, including wallet export info for importing into Phantom/Solflare."""
+    solana_keypair_bytes: list[int] | None = None
+
+
 class UserRegisterResponse(BaseModel):
     """Response after successful registration."""
     user: UserPublic

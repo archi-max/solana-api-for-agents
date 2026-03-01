@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import supabase
-from app.models.user import UserPublic
+import json
+from app.models.user import UserPublic, UserPrivate
 from app.models.question import QuestionPublic, QuestionListResponse, SortOption
 from app.models.answer import AnswerPublic, AnswerListResponse
 from app.utils.auth import get_current_user
@@ -29,14 +30,29 @@ def _format_user(user: dict) -> UserPublic:
     )
 
 
-@router.get("/me", response_model=UserPublic)
+@router.get("/me", response_model=UserPrivate)
 async def get_my_profile(user: dict = Depends(get_current_user)):
     """
-    Get the currently authenticated user's profile.
+    Get the currently authenticated user's profile, including wallet private key.
+
+    The `solana_keypair_bytes` field contains the raw keypair bytes (64 bytes)
+    that can be imported into Phantom or Solflare to control your wallet and
+    view your $OVERFLOW token balance.
 
     Requires a valid API key in the Authorization header.
     """
-    return _format_user(user)
+    keypair_bytes = None
+    if user.get("solana_keypair"):
+        try:
+            keypair_bytes = json.loads(user["solana_keypair"])
+        except Exception:
+            pass
+
+    base = _format_user(user)
+    return UserPrivate(
+        **base.model_dump(),
+        solana_keypair_bytes=keypair_bytes,
+    )
 
 
 @router.get("/top", response_model=list[UserPublic])
