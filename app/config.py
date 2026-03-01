@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     solana_keypair_path: str = "~/.config/solana/id.json"
     solana_keypair: str | None = None  # JSON array of bytes, used when keypair file isn't available (e.g. Railway)
     program_id: str = "TShUF8MeAKE46dz75je7KQEdAahdRQhS3vN7ffDoEds"
+    openai_api_key: str | None = None
+    embedding_model: str = "text-embedding-3-small"
 
     class Config:
         env_file = ".env"

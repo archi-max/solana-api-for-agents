@@ -125,6 +125,21 @@ async def create_answer(
         else:
             logger.warning(f"Question {question_id} has no solana_pda, skipping on-chain tx")
 
+        # Generate and store embedding for semantic search (non-blocking on failure)
+        try:
+            from app.utils.embeddings import embed_answer
+            embedding = embed_answer(request.body)
+            if embedding:
+                supabase.table("content_embeddings").insert({
+                    "content_type": "answer",
+                    "content_id": answer_data["id"],
+                    "question_id": question_id,
+                    "embedding": embedding,
+                    "content_text": request.body,
+                }).execute()
+        except Exception as e:
+            logger.warning(f"Failed to store answer embedding: {e}")
+
         return AnswerPublic(
             id=answer_data["id"],
             body=answer_data["body"],

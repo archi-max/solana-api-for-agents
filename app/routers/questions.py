@@ -56,6 +56,88 @@ def _format_question(question: dict, user_vote: str | None = None) -> QuestionPu
     )
 
 
+@router.get("/search", response_model=QuestionListResponse)
+async def search_questions(
+    q: str = Query(..., min_length=1, description="Semantic search query (searches question and answer content by meaning)"),
+    keywords: str | None = Query(None, description="Optional keyword filter on title and body (space-separated words, all must match)"),
+    forum_id: str | None = Query(None, description="Filter by forum ID"),
+    page: int = Query(1, ge=1, description="Page number (starts at 1)"),
+    user: dict | None = Depends(get_optional_user),
+):
+    """
+    Semantic search for questions.
+
+    Finds questions whose meaning matches your query, ranked by relevance.
+    Searches both question content (title + body) and answer content,
+    returning the parent questions.
+
+    - **q** (required): Natural language search query.
+    - **keywords**: Optional keyword filter — each space-separated word must appear
+      in the question title or body. Use to narrow semantic results.
+    - **forum_id**: Filter to a specific forum.
+    - Returns 20 questions per page, sorted by relevance.
+    - If authenticated, includes user_vote for each question.
+
+    Public endpoint - authentication optional.
+    """
+    from app.utils.embeddings import generate_embedding
+
+    # Generate embedding for the query
+    query_embedding = generate_embedding(q)
+    if not query_embedding:
+        raise HTTPException(status_code=503, detail="Embedding service unavailable")
+
+    # Call the Supabase RPC for vector similarity search
+    rpc_params = {
+        "query_embedding": query_embedding,
+        "match_count": PAGE_SIZE * page,
+        "filter_forum_id": forum_id,
+    }
+    search_result = supabase.rpc("search_questions_by_embedding", rpc_params).execute()
+
+    if not search_result.data:
+        return QuestionListResponse(questions=[], page=page, total_pages=1)
+
+    question_ids = [r["question_id"] for r in search_result.data]
+    total = len(question_ids)
+    total_pages = math.ceil(total / PAGE_SIZE) if total > 0 else 1
+
+    # Paginate the IDs
+    start = (page - 1) * PAGE_SIZE
+    page_ids = question_ids[start:start + PAGE_SIZE]
+
+    if not page_ids:
+        return QuestionListResponse(questions=[], page=page, total_pages=total_pages)
+
+    # Fetch full question data for matching IDs
+    query = (
+        supabase.table("questions")
+        .select("*, users!questions_author_id_fkey(username), forums(name)")
+        .in_("id", page_ids)
+    )
+
+    # Apply keyword filter if provided
+    if keywords:
+        keyword_words = [_sanitize_search_word(w) for w in keywords.split() if w.strip()]
+        for word in keyword_words:
+            query = query.or_(f"title.ilike.%{word}%,body.ilike.%{word}%")
+
+    result = query.execute()
+
+    # Preserve relevance ordering from vector search
+    id_order = {qid: i for i, qid in enumerate(page_ids)}
+    sorted_questions = sorted(result.data, key=lambda q: id_order.get(q["id"], 999))
+
+    # Get user votes if authenticated
+    user_votes = _get_user_votes(user, [q["id"] for q in sorted_questions])
+
+    return QuestionListResponse(
+        questions=[_format_question(q, user_vote=user_votes.get(q["id"])) for q in sorted_questions],
+        page=page,
+        total_pages=total_pages,
+    )
+
+
 @router.post("", response_model=QuestionPublic)
 async def create_question(
     request: QuestionCreateRequest,
@@ -128,6 +210,21 @@ async def create_question(
                 )
         else:
             logger.warning(f"Forum {request.forum_id} has no solana_pda, skipping on-chain tx")
+
+        # Generate and store embedding for semantic search (non-blocking on failure)
+        try:
+            from app.utils.embeddings import embed_question
+            embedding = embed_question(request.title, request.body)
+            if embedding:
+                supabase.table("content_embeddings").insert({
+                    "content_type": "question",
+                    "content_id": question_data["id"],
+                    "question_id": question_data["id"],
+                    "embedding": embedding,
+                    "content_text": f"{request.title}\n\n{request.body}",
+                }).execute()
+        except Exception as e:
+            logger.warning(f"Failed to store question embedding: {e}")
 
         return QuestionPublic(
             id=question_data["id"],

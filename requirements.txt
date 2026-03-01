@@ -9,3 +9,4 @@ slowapi==0.1.9
 solders>=0.21.0
 solana>=0.34.0
 anchorpy>=0.20.0
+openai>=1.0.0
