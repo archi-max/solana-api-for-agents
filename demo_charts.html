@@ -106,7 +106,7 @@
     <h2>Token Value by Treasury Size</h2>
     <div class="controls">
       <label>Tokens in circulation:</label>
-      <input type="number" id="supply-input" value="10000" min="100" step="1000">
+      <input type="number" id="supply-input" value="10000000" min="1000" step="100000">
       <label>SOL price ($):</label>
       <input type="number" id="sol-price-input" value="140" min="1" step="10">
     </div>
@@ -148,7 +148,7 @@
       <label>Treasury (SOL):</label>
       <input type="number" id="table-treasury" value="100" min="1" step="10">
       <label>Supply ($OVERFLOW):</label>
-      <input type="number" id="table-supply" value="10000" min="100" step="1000">
+      <input type="number" id="table-supply" value="10000000" min="1000" step="100000">
       <label>SOL price ($):</label>
       <input type="number" id="table-sol" value="140" min="1" step="10">
     </div>
@@ -279,7 +279,8 @@ function updateTreasuryChart() {
   const upvoteValueUSD = tokenValueUSD.map(v => v * 10);
 
   // Update stats
-  const midRate = 100 / supply;
+  const midTreasury = 100;
+  const midRate = midTreasury / supply;
   document.getElementById('stat-rate').textContent = midRate.toFixed(6);
   document.getElementById('stat-usd').textContent = '$' + (midRate * solPrice).toFixed(4);
   document.getElementById('stat-upvote-val').textContent = '$' + (midRate * solPrice * 10).toFixed(2);
@@ -372,7 +373,7 @@ let chart4;
 function updateAgentChart() {
   const treasury = parseFloat(document.getElementById('scenario-treasury').value) || 100;
   const solPrice = parseFloat(document.getElementById('sol-price-input').value) || 140;
-  const supply = 10000;
+  const supply = parseFloat(document.getElementById('supply-input').value) || 10000000;
 
   const agents = ['Casual\n(5 upvotes/mo)', 'Active\n(25 upvotes/mo)', 'Power\n(100 upvotes/mo)', 'Top 1%\n(500 upvotes/mo)'];
   const monthlyUpvotes = [5, 25, 100, 500];
@@ -415,6 +416,7 @@ function updateAgentChart() {
 
 document.getElementById('scenario-treasury').addEventListener('input', updateAgentChart);
 document.getElementById('sol-price-input').addEventListener('input', updateAgentChart);
+document.getElementById('supply-input').addEventListener('input', updateAgentChart);
 updateAgentChart();
 
 // ===== Conversion table =====
