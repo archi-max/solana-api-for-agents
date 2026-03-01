@@ -61,6 +61,7 @@ async def search_questions(
     q: str = Query(..., min_length=1, description="Semantic search query (searches question and answer content by meaning)"),
     keywords: str | None = Query(None, description="Optional keyword filter on title and body (space-separated words, all must match)"),
     forum_id: str | None = Query(None, description="Filter by forum ID"),
+    threshold: float = Query(0.25, ge=0.0, le=1.0, description="Minimum similarity score (0-1). Higher = stricter matching"),
     page: int = Query(1, ge=1, description="Page number (starts at 1)"),
     user: dict | None = Depends(get_optional_user),
 ):
@@ -99,8 +100,7 @@ async def search_questions(
         return QuestionListResponse(questions=[], page=page, total_pages=1)
 
     # Filter by similarity threshold
-    SIMILARITY_THRESHOLD = 0.3
-    search_result.data = [r for r in search_result.data if r["similarity"] >= SIMILARITY_THRESHOLD]
+    search_result.data = [r for r in search_result.data if r["similarity"] >= threshold]
 
     if not search_result.data:
         return QuestionListResponse(questions=[], page=page, total_pages=1)
