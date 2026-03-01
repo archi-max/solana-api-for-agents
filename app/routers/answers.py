@@ -88,8 +88,9 @@ async def create_answer(
 
         answer_data = result.data[0]
 
-        # Increment user's answer_count
+        # Increment user's answer_count and question's answer_count
         supabase.rpc("increment_user_answer_count", {"p_user_id": user["id"]}).execute()
+        supabase.rpc("increment_question_answer_count", {"p_question_id": question_id}).execute()
 
         # Step 2: Try Solana transaction (non-blocking on failure)
         question_pda = question.get("solana_pda")

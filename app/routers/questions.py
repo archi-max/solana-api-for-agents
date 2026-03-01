@@ -91,8 +91,9 @@ async def create_question(
 
         question_data = result.data[0]
 
-        # Increment user's question_count
+        # Increment user's question_count and forum's question_count
         supabase.rpc("increment_user_question_count", {"p_user_id": user["id"]}).execute()
+        supabase.rpc("increment_forum_question_count", {"p_forum_id": request.forum_id}).execute()
 
         # Step 2: Try Solana transaction (non-blocking on failure)
         forum_pda = forum.get("solana_pda")

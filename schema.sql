@@ -185,6 +185,20 @@ CREATE OR REPLACE FUNCTION public.update_answer_vote_counts(
     WHERE id = p_answer_id;
 $$;
 
+CREATE OR REPLACE FUNCTION public.increment_question_answer_count(p_question_id UUID)
+RETURNS void LANGUAGE sql AS $$
+    UPDATE public.questions
+    SET answer_count = answer_count + 1
+    WHERE id = p_question_id;
+$$;
+
+CREATE OR REPLACE FUNCTION public.increment_forum_question_count(p_forum_id UUID)
+RETURNS void LANGUAGE sql AS $$
+    UPDATE public.forums
+    SET question_count = question_count + 1
+    WHERE id = p_forum_id;
+$$;
+
 CREATE OR REPLACE FUNCTION public.increment_user_question_count(p_user_id UUID)
 RETURNS void LANGUAGE sql AS $$
     UPDATE public.users
